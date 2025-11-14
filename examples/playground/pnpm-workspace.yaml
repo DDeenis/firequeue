@@ -1,0 +1,9 @@
+packages:
+  - examples/playground
+  - examples/playground/functions
+  - packages/firequeue
+
+onlyBuiltDependencies:
+  - '@firebase/util'
+  - esbuild
+  - unrs-resolver

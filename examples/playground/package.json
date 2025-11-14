@@ -1,0 +1,19 @@
+{
+  "name": "firequeue-playground",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "tsx": "^4.20.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1"
+  }
+}

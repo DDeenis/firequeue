@@ -1,0 +1,8 @@
+packages:
+  - "packages/*"
+  - "examples/*"
+  - "examples/playground/functions"
+
+onlyBuiltDependencies:
+  - "@firebase/util"
+  - unrs-resolver
