@@ -3,7 +3,7 @@ import {
   onDocumentWritten,
 } from "firebase-functions/firestore";
 import {
-  type Step,
+  type Serializer,
   type StepFactory,
   type Task,
   type TaskOptions,
@@ -11,21 +11,16 @@ import {
   TaskStatus,
 } from "./types.js";
 import * as logger from "firebase-functions/logger";
-import {
-  deSerializeResult,
-  isStepExecutionResult,
-  serializeResult,
-  throwStepStatus,
-} from "./step.js";
+import { isStepExecutionResult, throwStepStatus } from "./step.js";
 import { FirestoreTasksStorage } from "./storage.js";
-import { removeTrailingSlash } from "./utils.js";
+import { defaultSerializer, removeTrailingSlash } from "./utils.js";
 
-export function createFirequeue({
-  firestore,
-}: {
+export function createFirequeue(options: {
   firestore: FirebaseFirestore.Firestore;
+  serializer?: Serializer;
 }) {
-  const storage = new FirestoreTasksStorage(firestore);
+  const storage = new FirestoreTasksStorage(options.firestore);
+  const serializer = options.serializer ?? defaultSerializer;
 
   /**
    * @returns a Firestore trigger that automatically handles tasks and steps execution
@@ -143,7 +138,7 @@ export function createFirequeue({
 
                 await storage.updateStep(taskDocumentPath, stepId, {
                   status: StepStatus.Completed,
-                  serializedResult: serializeResult(result),
+                  serializedResult: serializer.stringify(result),
                 });
               } catch (error) {
                 logger.error(
@@ -176,7 +171,11 @@ export function createFirequeue({
                 `[FireQueue] Step '${step.stepId}' for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is completed, returning result`
               );
 
-              return deSerializeResult(step.serializedResult) as any;
+              if (step.serializedResult === null) {
+                throw new Error(`Attempt to parse an unset serializedResult`);
+              }
+
+              return serializer.parse(step.serializedResult) as any;
             }
 
             case StepStatus.Cancelled: {
@@ -202,10 +201,9 @@ export function createFirequeue({
         },
       };
 
-      const deSerializedTaskInput = deSerializeResult(
-        taskSnapshot.serializedInputData,
-        { nullAsError: false }
-      );
+      const deSerializedTaskInput = taskSnapshot.serializedInputData
+        ? serializer.parse(taskSnapshot.serializedInputData)
+        : null;
 
       try {
         await storage.updateTask(taskDocumentPath, {
@@ -313,7 +311,7 @@ export function createFirequeue({
     return storage.createTask({
       taskId,
       collectionPath,
-      serializedInputData: serializeResult(input),
+      serializedInputData: serializer.stringify(input),
     });
   }
 

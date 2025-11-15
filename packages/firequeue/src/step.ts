@@ -4,9 +4,6 @@ import {
   STEP_PENDING,
   STEP_CANCELLED,
   STEP_ERROR,
-  STEP_VAL_UNDEFINED,
-  STEP_VAL_NULL,
-  STEP_VAL_NAN,
   STEP_CREATED,
 } from "./types.js";
 
@@ -62,42 +59,4 @@ export function isStepExecutionResult<T extends ThrowableStepStatus>(
   return (
     obj instanceof StepExecutionResult && statusToReason[status] === obj.reason
   );
-}
-
-export function serializeResult(result: unknown) {
-  if (result === undefined) {
-    return STEP_VAL_UNDEFINED;
-  } else if (result === null) {
-    return STEP_VAL_NULL;
-  } else if (Number.isNaN(result)) {
-    return STEP_VAL_NAN;
-  }
-
-  // TODO: handle null, undefined, and other types
-  return JSON.stringify(result);
-}
-
-export function deSerializeResult(
-  serializedResult: string | null,
-  { nullAsError }: { nullAsError?: boolean } = { nullAsError: true }
-): unknown {
-  // null means that the value was not set
-  if (serializedResult === null) {
-    if (nullAsError) {
-      throw new Error(`Tried to de-serialize an unset value`);
-    }
-
-    return null;
-  }
-
-  if (serializedResult === STEP_VAL_UNDEFINED) {
-    return undefined;
-  } else if (serializedResult === STEP_VAL_NULL) {
-    return null;
-  } else if (serializedResult === STEP_VAL_NAN) {
-    return NaN;
-  }
-
-  // TODO: handle null, undefined, and other types
-  return JSON.parse(serializedResult);
 }
