@@ -86,13 +86,13 @@ importers:
       firebase-functions:
         specifier: ^7.0.0
         version: 7.0.0(firebase-admin@13.6.0)
-      rimraf:
-        specifier: ^6.1.0
-        version: 6.1.0
     devDependencies:
       firebase-functions-test:
         specifier: ^3.4.1
         version: 3.4.1(firebase-admin@13.6.0)(firebase-functions@7.0.0(firebase-admin@13.6.0))(jest@30.2.0(@types/node@24.10.1))
+      rimraf:
+        specifier: ^6.1.0
+        version: 6.1.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

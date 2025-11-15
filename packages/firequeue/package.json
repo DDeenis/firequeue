@@ -1,7 +1,8 @@
 {
   "name": "@fireq/firequeue",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.0.1",
+  "description": "Firequeue is a durable workflow orchestrator for Firebase Cloud Functions, enabling long-running, reliable, multi-step workflows that can pause and resume. Inspired by Inngest, it offers a simple async/await API built on Cloud Functions and Firestore for defining complex, stateful processes resilient to timeouts and failures.",
+  "homepage": "https://github.com/DDeenis/firequeue",
   "main": "lib/index.js",
   "type": "module",
   "scripts": {
@@ -10,16 +11,24 @@
     "build": "tsc",
     "prepublish": "pnpm run build"
   },
-  "keywords": [],
-  "author": "",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "firebase",
+    "firestore",
+    "inngest",
+    "queue"
+  ],
+  "author": "ddeenis",
   "license": "ISC",
   "packageManager": "pnpm@10.22.0",
-  "dependencies": {
-    "firebase-functions": "^7.0.0",
-    "rimraf": "^6.1.0"
+  "peerDependencies": {
+    "firebase-functions": "^7.0.0"
   },
   "devDependencies": {
     "firebase-functions-test": "^3.4.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "rimraf": "^6.1.0"
   }
 }
