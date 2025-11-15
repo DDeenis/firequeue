@@ -50,6 +50,8 @@ Creating a workflow is a two-step process: define your workflow logic, and then 
 
 Each `step.run()` call encapsulates a single, distinct operation. This is crucial for long-running tasks, as Firequeue ensures that each step runs exactly once and its result is persisted. If a function times out or fails, Firequeue will resume from the last successfully completed step. Keep individual steps focused and relatively short to maximize resilience and avoid hitting Cloud Function timeouts within a step.
 
+Here's an example of an e-commerce order fulfillment workflow. It involves several distinct services (payments, inventory, shipping, email) and is a perfect use case for a durable workflow.
+
 **`src/functions.ts`**
 
 ```typescript
