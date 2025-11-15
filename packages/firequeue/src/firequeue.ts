@@ -98,14 +98,17 @@ export function createFirequeue(options: {
         }
       }
 
-      let stepsExecuted = 0;
-      // pre-fetch all steps - useful to not fetch each completed step one by one
-      const stepsPromise = storage.getAllSteps(taskDocumentPath);
+      let stepExecuted = false;
 
       const stepsFactory: StepFactory = {
         run: async (stepId, run) => {
-          // const step = await storage.getStep(taskDocumentPath, stepId);
-          const step = (await stepsPromise).find((s) => s.stepId === stepId);
+          // optimisation: re-schedule function only if it tries to execute more then one step at a time (there is more steps)
+          if (stepExecuted) {
+            // throw to re-run the task (successfull execution)
+            throwStepStatus(stepId, StepStatus.Completed);
+          }
+
+          const step = await storage.getStep(taskDocumentPath, stepId);
 
           if (!step) {
             logger.info(
@@ -123,7 +126,7 @@ export function createFirequeue(options: {
           switch (step.status) {
             case StepStatus.Scheduled: {
               try {
-                stepsExecuted += 1;
+                stepExecuted = true;
                 await storage.updateStep(taskDocumentPath, stepId, {
                   status: StepStatus.Pending,
                   error: null,
@@ -143,6 +146,8 @@ export function createFirequeue(options: {
                   status: StepStatus.Completed,
                   serializedResult: serializer.stringify(result),
                 });
+
+                return result;
               } catch (error) {
                 logger.error(
                   `[FireQueue] Failed to execute step '${stepId}' for task '${taskSnapshot.taskId}'`,
@@ -156,9 +161,6 @@ export function createFirequeue(options: {
                 });
                 throwStepStatus(stepId, StepStatus.Error);
               }
-
-              // throw to re-run the task (successfull execution)
-              throwStepStatus(stepId, StepStatus.Completed);
             }
 
             case StepStatus.Pending: {
@@ -223,7 +225,7 @@ export function createFirequeue(options: {
           taskInstanceId: taskSnapshot.instanceId,
         });
 
-        if (stepsExecuted === 0) {
+        if (stepExecuted === false) {
           logger.debug(
             `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) executed no steps, marking as completed`
           );

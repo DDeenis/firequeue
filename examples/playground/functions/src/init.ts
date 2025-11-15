@@ -1,4 +1,4 @@
-import { createFirequeue } from "firequeue";
+import { createFirequeue } from "@fireq/firequeue";
 import * as admin from "firebase-admin";
 
 admin.initializeApp();

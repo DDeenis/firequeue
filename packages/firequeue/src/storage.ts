@@ -71,13 +71,14 @@ export class FirestoreTasksStorage {
   public async createStep(taskDocumentPath: string, stepId: string) {
     const stepRef = this.getStepRef(taskDocumentPath, stepId);
 
-    await this.firestore.runTransaction(async (trx) => {
-      return trx.create(stepRef, {
+    return stepRef.set(
+      {
         stepId,
         serializedResult: null,
         status: StepStatus.Scheduled,
-      } satisfies Step);
-    });
+      } satisfies Step,
+      { merge: false }
+    );
   }
 
   public async updateStep(
@@ -87,9 +88,7 @@ export class FirestoreTasksStorage {
   ) {
     const stepRef = this.getStepRef(taskDocumentPath, stepId);
 
-    await this.firestore.runTransaction(async (trx) => {
-      return trx.update(stepRef, updates);
-    });
+    return stepRef.update(updates);
   }
 
   public async markStepsForExecution({
