@@ -4,6 +4,19 @@
 
 Firequeue allows you to write long-running, reliable, multi-step workflows (tasks) for Firebase that can pause and resume, surviving function timeouts and failures. It provides a simple, `async/await` API built on top of Cloud Functions and Firestore, enabling you to define complex, stateful processes with ease.
 
+## Installation
+
+```bash
+# pnpm
+pnpm add @fireq/firequeue
+
+# npm
+npm install @fireq/firequeue
+
+# yarn
+yarn add @fireq/firequeue
+```
+
 ## Features
 
 - **Durable Execution:** Workflows automatically pause and resume between steps, making them resilient to function timeouts and failures.
@@ -26,19 +39,6 @@ Firequeue cleverly uses Firestore to persist the state of your workflows.
 4.  **Resume & Return:** On subsequent runs, when `step.run()` is called for a step that has already completed, it simply retrieves the saved result from Firestore and returns it without re-running the code.
 
 This "pause and resume" mechanism ensures that each step runs exactly once, and the entire workflow can run for much longer than a single Cloud Function timeout allows.
-
-## Installation
-
-```bash
-# pnpm
-pnpm add @fireq/firequeue
-
-# npm
-npm install @fireq/firequeue
-
-# yarn
-yarn add @fireq/firequeue
-```
 
 ## Creating a Workflow
 
