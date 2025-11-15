@@ -99,10 +99,13 @@ export function createFirequeue(options: {
       }
 
       let stepsExecuted = 0;
+      // pre-fetch all steps - useful to not fetch each completed step one by one
+      const stepsPromise = storage.getAllSteps(taskDocumentPath);
 
       const stepsFactory: StepFactory = {
         run: async (stepId, run) => {
-          const step = await storage.getStep(taskDocumentPath, stepId);
+          // const step = await storage.getStep(taskDocumentPath, stepId);
+          const step = (await stepsPromise).find((s) => s.stepId === stepId);
 
           if (!step) {
             logger.info(
@@ -238,7 +241,7 @@ export function createFirequeue(options: {
           );
 
           logger.debug(
-            `[FireQueue] Scheduting task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) to execute next step`
+            `[FireQueue] Scheduling task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) to execute next step`
           );
 
           // schedule for next steps execution
@@ -247,7 +250,7 @@ export function createFirequeue(options: {
           });
         } else if (isStepExecutionResult(err, StepStatus.Scheduled)) {
           logger.debug(
-            `[FireQueue] Scheduting task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) to execute a new step`
+            `[FireQueue] Scheduling task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) to execute a new step`
           );
 
           await storage.updateTask(taskDocumentPath, {

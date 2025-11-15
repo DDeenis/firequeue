@@ -5,7 +5,9 @@ export class FirestoreTasksStorage {
   constructor(private firestore: FirebaseFirestore.Firestore) {}
 
   public getTaskRef(taskDocumentPath: string) {
-    return this.firestore.doc(taskDocumentPath);
+    return this.firestore.doc(
+      taskDocumentPath
+    ) as FirebaseFirestore.DocumentReference<Task>;
   }
 
   public async createTask({
@@ -32,7 +34,7 @@ export class FirestoreTasksStorage {
     return collection.doc(id).set(newTask);
   }
 
-  public async updateTask(taskDocumentPath: string, updates: Partial<Task>) {
+  public updateTask(taskDocumentPath: string, updates: Partial<Task>) {
     const taskDocRef = this.getTaskRef(taskDocumentPath);
     return taskDocRef.update(updates);
   }
@@ -42,13 +44,28 @@ export class FirestoreTasksStorage {
       `${taskDocumentPath}/steps`
     );
 
-    return stepsCollection.doc(stepId);
+    return stepsCollection.doc(
+      stepId
+    ) as FirebaseFirestore.DocumentReference<Step>;
   }
 
-  public getStep(taskDocumentPath: string, stepId: string) {
+  public getStep(
+    taskDocumentPath: string,
+    stepId: string
+  ): Promise<Step | null> {
     return this.getStepRef(taskDocumentPath, stepId)
       .get()
-      .then((doc) => (doc.data() ?? null) as Step | null);
+      .then((doc) => doc.data() ?? null);
+  }
+
+  public getAllSteps(taskDocumentPath: string): Promise<Step[]> {
+    const stepsCollection = this.firestore.collection(
+      `${taskDocumentPath}/steps`
+    ) as FirebaseFirestore.CollectionReference<Step>;
+
+    return stepsCollection
+      .get()
+      .then(({ docs }) => docs.map((doc) => doc.data()));
   }
 
   public async createStep(taskDocumentPath: string, stepId: string) {
