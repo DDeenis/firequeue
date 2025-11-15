@@ -1,11 +1,21 @@
 {
   "folders": [
-	{
-		"path": "packages/firequeue"
-	},
-	{
-		"path": "examples/playground"
-	}
-],
+    {
+      "name": "firequeue",
+      "path": "packages/firequeue"
+    },
+    {
+      "name": "playground",
+      "path": "examples/playground"
+    },
+    {
+      "name": "tests",
+      "path": "examples/tests"
+    },
+    {
+      "name": "firequeue",
+      "path": "."
+    }
+  ],
   "settings": {}
 }

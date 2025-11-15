@@ -2,6 +2,7 @@ packages:
   - "packages/*"
   - "examples/*"
   - "examples/playground/functions"
+  - "examples/tests/functions"
 
 onlyBuiltDependencies:
   - "@firebase/util"

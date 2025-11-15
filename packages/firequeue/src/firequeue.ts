@@ -17,60 +17,15 @@ import {
   serializeResult,
   throwStepStatus,
 } from "./step.js";
-
-const trailingSlashRegex = /\/+$/;
-const removeTrailingSlash = (str: string) =>
-  str.replace(trailingSlashRegex, "");
+import { FirestoreTasksStorage } from "./storage.js";
+import { removeTrailingSlash } from "./utils.js";
 
 export function createFirequeue({
   firestore,
 }: {
   firestore: FirebaseFirestore.Firestore;
 }) {
-  function getTaskRef(taskDocumentPath: string) {
-    return firestore.doc(taskDocumentPath);
-  }
-
-  async function updateTask(taskDocumentPath: string, updates: Partial<Task>) {
-    const taskDocRef = getTaskRef(taskDocumentPath);
-    return taskDocRef.update(updates);
-  }
-
-  function getStepRef(taskDocumentPath: string, stepId: string) {
-    const stepsCollection = firestore.collection(`${taskDocumentPath}/steps`);
-
-    return stepsCollection.doc(stepId);
-  }
-
-  function getStep(taskDocumentPath: string, stepId: string) {
-    return getStepRef(taskDocumentPath, stepId)
-      .get()
-      .then((doc) => (doc.data() ?? null) as Step | null);
-  }
-
-  async function createStep(taskDocumentPath: string, stepId: string) {
-    const stepRef = getStepRef(taskDocumentPath, stepId);
-
-    await firestore.runTransaction(async (trx) => {
-      return trx.create(stepRef, {
-        stepId,
-        serializedResult: null,
-        status: StepStatus.Scheduled,
-      } satisfies Step);
-    });
-  }
-
-  async function updateStep(
-    taskDocumentPath: string,
-    stepId: string,
-    updates: Partial<Step>
-  ) {
-    const stepRef = getStepRef(taskDocumentPath, stepId);
-
-    await firestore.runTransaction(async (trx) => {
-      return trx.update(stepRef, updates);
-    });
-  }
+  const storage = new FirestoreTasksStorage(firestore);
 
   /**
    * @returns a Firestore trigger that automatically handles tasks and steps execution
@@ -152,14 +107,14 @@ export function createFirequeue({
 
       const stepsFactory: StepFactory = {
         run: async (stepId, run) => {
-          const step = await getStep(taskDocumentPath, stepId);
+          const step = await storage.getStep(taskDocumentPath, stepId);
 
           if (!step) {
             logger.info(
               `[FireQueue] Step '${stepId}' doesn't exist for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}), creating`
             );
 
-            await createStep(taskDocumentPath, stepId);
+            await storage.createStep(taskDocumentPath, stepId);
             throwStepStatus(stepId, StepStatus.Scheduled);
           }
 
@@ -171,7 +126,7 @@ export function createFirequeue({
             case StepStatus.Scheduled: {
               try {
                 stepsExecuted += 1;
-                await updateStep(taskDocumentPath, stepId, {
+                await storage.updateStep(taskDocumentPath, stepId, {
                   status: StepStatus.Pending,
                   error: null,
                 });
@@ -186,7 +141,7 @@ export function createFirequeue({
                   `[FireQueue] Step '${step.stepId}' for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) executed successfully`
                 );
 
-                await updateStep(taskDocumentPath, stepId, {
+                await storage.updateStep(taskDocumentPath, stepId, {
                   status: StepStatus.Completed,
                   serializedResult: serializeResult(result),
                 });
@@ -196,7 +151,7 @@ export function createFirequeue({
                   error
                 );
 
-                await updateStep(taskDocumentPath, stepId, {
+                await storage.updateStep(taskDocumentPath, stepId, {
                   status: StepStatus.Error,
                   serializedResult: null,
                   error: (error as Error).message ?? undefined,
@@ -253,7 +208,7 @@ export function createFirequeue({
       );
 
       try {
-        await updateTask(taskDocumentPath, {
+        await storage.updateTask(taskDocumentPath, {
           status: TaskStatus.Pending,
         });
 
@@ -272,7 +227,7 @@ export function createFirequeue({
             `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) executed no steps, marking as completed`
           );
 
-          await updateTask(taskDocumentPath, {
+          await storage.updateTask(taskDocumentPath, {
             status: TaskStatus.Completed,
           });
         }
@@ -289,71 +244,57 @@ export function createFirequeue({
           );
 
           // schedule for next steps execution
-          await updateTask(taskDocumentPath, {
+          await storage.updateTask(taskDocumentPath, {
             status: TaskStatus.Scheduled,
           });
-
-          return;
-        }
-
-        if (isStepExecutionResult(err, StepStatus.Scheduled)) {
+        } else if (isStepExecutionResult(err, StepStatus.Scheduled)) {
           logger.debug(
             `[FireQueue] Scheduting task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) to execute a new step`
           );
 
-          await updateTask(taskDocumentPath, {
+          await storage.updateTask(taskDocumentPath, {
             status: TaskStatus.Scheduled,
             error: null,
           });
-          return;
-        }
-
-        if (isStepExecutionResult(err, StepStatus.Pending)) {
+        } else if (isStepExecutionResult(err, StepStatus.Pending)) {
           logger.debug(
             `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is now Pending due to step '${err.stepId}' status`
           );
 
-          await updateTask(taskDocumentPath, {
+          await storage.updateTask(taskDocumentPath, {
             status: TaskStatus.Pending,
             error: null,
           });
-          return;
-        }
-
-        if (isStepExecutionResult(err, StepStatus.Cancelled)) {
+        } else if (isStepExecutionResult(err, StepStatus.Cancelled)) {
           logger.debug(
             `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is now Cancelled due to step '${err.stepId}' status`
           );
 
-          await updateTask(taskDocumentPath, {
+          await storage.updateTask(taskDocumentPath, {
             status: TaskStatus.Cancelled,
             error: "Cancelled due to a step cancellation",
           });
-          return;
-        }
-
-        if (isStepExecutionResult(err, StepStatus.Error)) {
+        } else if (isStepExecutionResult(err, StepStatus.Error)) {
           logger.debug(
             `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is now Error due to step '${err.stepId}' status`
           );
 
-          await updateTask(taskDocumentPath, {
+          await storage.updateTask(taskDocumentPath, {
             status: TaskStatus.Error,
             error: "Stopped due to a step error",
           });
-          return;
+        } else {
+          logger.debug(
+            `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is now Error due to execution error`,
+            err
+          );
+
+          await storage.updateTask(taskDocumentPath, {
+            status: TaskStatus.Error,
+            error:
+              (err as Error).message || "Stopped due to an unknown step error",
+          });
         }
-
-        logger.debug(
-          `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is now Error due to execution error`,
-          err
-        );
-
-        await updateTask(taskDocumentPath, {
-          status: TaskStatus.Error,
-          error:
-            (err as Error).message || "Stopped due to an unknown step error",
-        });
       }
     });
   }
@@ -367,47 +308,22 @@ export function createFirequeue({
     collectionPath: string;
     input?: unknown;
   }) {
-    const collection = firestore.collection(
-      removeTrailingSlash(collectionPath)
-    );
-
-    const id = `${taskId}-${collection.doc().id}`;
-    const newTask: Task = {
-      taskId,
-      instanceId: id,
-      status: TaskStatus.Scheduled,
-      serializedInputData: serializeResult(input),
-    };
-
     logger.debug(`[FireQueue] Created task function '${taskId}'`);
 
-    return collection.doc(id).set(newTask);
+    return storage.createTask({
+      taskId,
+      collectionPath,
+      serializedInputData: serializeResult(input),
+    });
   }
 
-  async function reExecuteSteps({
-    taskInstanceId,
-    collectionPath,
-    stepIds,
-  }: {
+  function scheduleSteps(input: {
     taskInstanceId: string;
     collectionPath: string;
     stepIds: string[];
   }) {
-    const taskDocumentPath = `${collectionPath}/${taskInstanceId}`;
-
-    const taskRef = getTaskRef(taskDocumentPath);
-    const stepRefs = stepIds.map((stepId) =>
-      getStepRef(taskDocumentPath, stepId)
-    );
-
-    await firestore.runTransaction(async (trx) => {
-      for (const stepRef of stepRefs) {
-        trx.update(stepRef, { status: StepStatus.Scheduled });
-      }
-
-      trx.update(taskRef, { status: TaskStatus.Scheduled });
-    });
+    return storage.markStepsForExecution(input);
   }
 
-  return { createTask, invokeTask, reExecuteSteps };
+  return { createTask, invokeTask, scheduleSteps };
 }
