@@ -201,3 +201,29 @@ Starts a new workflow execution.
   - `taskId` (string): The `taskId` of the workflow you want to run.
   - `collectionPath` (string): The collection path where the target task is listening. This must match the path defined in `createTask`.
   - `input?` (unknown): An optional data payload to pass to the workflow. The data must be serializable.
+
+### `firequeue.cancelTask(options)`
+
+Cancels a running task instance.
+
+- `options`:
+  - `taskInstanceId` (string): The unique ID of the task instance to cancel.
+  - `collectionPath` (string): The collection path where the task is located.
+
+### `firequeue.cancelSteps(options)`
+
+Cancels specific steps within a task and sets the task status to `Cancelled`.
+
+- `options`:
+  - `taskInstanceId` (string): The unique ID of the task instance.
+  - `collectionPath` (string): The collection path where the task is located.
+  - `stepIds` (string[]): An array of step IDs to cancel.
+
+### `firequeue.scheduleSteps(options)`
+
+Reschedules specific steps within a task and sets the task status to `Scheduled`. This is useful for retrying failed steps.
+
+- `options`:
+  - `taskInstanceId` (string): The unique ID of the task instance.
+  - `collectionPath` (string): The collection path where the task is located.
+  - `stepIds` (string[]): An array of step IDs to reschedule.

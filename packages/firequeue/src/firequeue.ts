@@ -15,6 +15,15 @@ import { isStepExecutionResult, throwStepStatus } from "./step.js";
 import { FirestoreTasksStorage } from "./storage.js";
 import { defaultSerializer, removeTrailingSlash } from "./utils.js";
 
+/**
+ * Creates a new Firequeue instance.
+ *
+ * @param options - The configuration options for the Firequeue instance.
+ * @param options.firestore - A `FirebaseFirestore.Firestore` instance from the `firebase-admin` SDK.
+ * @param options.serializer - An optional custom serializer for handling data persistence.
+ *   Defaults to a JSON-based serializer that handles `undefined`, `null`, and `NaN`.
+ * @returns A Firequeue instance with methods for creating, invoking, and managing tasks.
+ */
 export function createFirequeue(options: {
   firestore: FirebaseFirestore.Firestore;
   serializer?: Serializer;
@@ -23,7 +32,12 @@ export function createFirequeue(options: {
   const serializer = options.serializer ?? defaultSerializer;
 
   /**
-   * @returns a Firestore trigger that automatically handles tasks and steps execution
+   * Creates a Cloud Function trigger that executes a workflow.
+   *
+   * @param taskId - A unique identifier for this task definition.
+   * @param taskOptions - The options for the task.
+   * @param run - The async function containing the workflow logic.
+   * @returns A Firestore trigger that automatically handles tasks and steps execution.
    */
   function createTask(
     taskId: string,
@@ -302,6 +316,16 @@ export function createFirequeue(options: {
     });
   }
 
+  /**
+   * Starts a new workflow execution.
+   *
+   * @param options - The options for invoking the task.
+   * @param options.taskId - The `taskId` of the workflow to run.
+   * @param options.collectionPath - The collection path where the target task is listening.
+   *   This must match the path defined in `createTask`.
+   * @param options.input - An optional data payload to pass to the workflow. The data must be serializable.
+   * @returns A promise that resolves with the created task document.
+   */
   function invokeTask({
     taskId,
     collectionPath,
@@ -320,6 +344,14 @@ export function createFirequeue(options: {
     });
   }
 
+  /**
+   * Cancels a running task instance.
+   *
+   * @param input - The options for canceling the task.
+   * @param input.taskInstanceId - The unique ID of the task instance to cancel.
+   * @param input.collectionPath - The collection path where the task is located.
+   * @returns A promise that resolves when the task is cancelled.
+   */
   function cancelTask(input: {
     taskInstanceId: string;
     collectionPath: string;
@@ -329,6 +361,15 @@ export function createFirequeue(options: {
     });
   }
 
+  /**
+   * Cancels specific steps within a task and sets the task status to Cancelled.
+   *
+   * @param input - The options for canceling the steps.
+   * @param input.taskInstanceId - The unique ID of the task instance.
+   * @param input.collectionPath - The collection path where the task is located.
+   * @param input.stepIds - An array of step IDs to cancel.
+   * @returns A promise that resolves when the steps and task are updated.
+   */
   function cancelSteps(input: {
     taskInstanceId: string;
     collectionPath: string;
@@ -341,6 +382,16 @@ export function createFirequeue(options: {
     });
   }
 
+  /**
+   * Reschedules specific steps within a task and sets the task status to Scheduled.
+   * This is useful for retrying failed steps.
+   *
+   * @param input - The options for scheduling the steps.
+   * @param input.taskInstanceId - The unique ID of the task instance.
+   * @param input.collectionPath - The collection path where the task is located.
+   * @param input.stepIds - An array of step IDs to reschedule.
+   * @returns A promise that resolves when the steps and task are updated.
+   */
   function scheduleSteps(input: {
     taskInstanceId: string;
     collectionPath: string;
