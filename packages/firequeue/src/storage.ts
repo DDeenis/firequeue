@@ -4,6 +4,15 @@ import { removeTrailingSlash } from "./utils.js";
 export class FirestoreTasksStorage {
   constructor(private firestore: FirebaseFirestore.Firestore) {}
 
+  public getTaskDocumentPath(input: {
+    taskInstanceId: string;
+    collectionPath: string;
+  }) {
+    return `${removeTrailingSlash(input.collectionPath)}/${
+      input.taskInstanceId
+    }`;
+  }
+
   public getTaskRef(taskDocumentPath: string) {
     return this.firestore.doc(
       taskDocumentPath
@@ -91,16 +100,23 @@ export class FirestoreTasksStorage {
     return stepRef.update(updates);
   }
 
-  public async markStepsForExecution({
+  public async markStepsAndTaskWithStatus({
     taskInstanceId,
     collectionPath,
     stepIds,
+    taskStatus,
+    stepsStatus,
   }: {
     taskInstanceId: string;
     collectionPath: string;
     stepIds: string[];
+    taskStatus: TaskStatus;
+    stepsStatus: StepStatus;
   }) {
-    const taskDocumentPath = `${collectionPath}/${taskInstanceId}`;
+    const taskDocumentPath = this.getTaskDocumentPath({
+      taskInstanceId,
+      collectionPath,
+    });
 
     const taskRef = this.getTaskRef(taskDocumentPath);
     const stepRefs = stepIds.map((stepId) =>
@@ -109,10 +125,10 @@ export class FirestoreTasksStorage {
 
     await this.firestore.runTransaction(async (trx) => {
       for (const stepRef of stepRefs) {
-        trx.update(stepRef, { status: StepStatus.Scheduled });
+        trx.update(stepRef, { status: stepsStatus });
       }
 
-      trx.update(taskRef, { status: TaskStatus.Scheduled });
+      trx.update(taskRef, { status: taskStatus });
     });
   }
 }

@@ -320,13 +320,38 @@ export function createFirequeue(options: {
     });
   }
 
+  function cancelTask(input: {
+    taskInstanceId: string;
+    collectionPath: string;
+  }) {
+    return storage.updateTask(storage.getTaskDocumentPath(input), {
+      status: TaskStatus.Cancelled,
+    });
+  }
+
+  function cancelSteps(input: {
+    taskInstanceId: string;
+    collectionPath: string;
+    stepIds: string[];
+  }) {
+    return storage.markStepsAndTaskWithStatus({
+      ...input,
+      taskStatus: TaskStatus.Cancelled,
+      stepsStatus: StepStatus.Cancelled,
+    });
+  }
+
   function scheduleSteps(input: {
     taskInstanceId: string;
     collectionPath: string;
     stepIds: string[];
   }) {
-    return storage.markStepsForExecution(input);
+    return storage.markStepsAndTaskWithStatus({
+      ...input,
+      taskStatus: TaskStatus.Scheduled,
+      stepsStatus: StepStatus.Scheduled,
+    });
   }
 
-  return { createTask, invokeTask, scheduleSteps };
+  return { createTask, invokeTask, cancelTask, cancelSteps, scheduleSteps };
 }
