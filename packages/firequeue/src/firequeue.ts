@@ -10,10 +10,10 @@ import {
   StepStatus,
   TaskStatus,
 } from "./types.js";
-import * as logger from "firebase-functions/logger";
 import { isStepExecutionResult, throwStepStatus } from "./step.js";
 import { FirestoreTasksStorage } from "./storage.js";
-import { defaultSerializer, removeTrailingSlash } from "./utils.js";
+import { defaultSerializer, removeTrailingSlash, logger } from "./utils.js";
+import type { LogSeverity } from "firebase-functions/logger";
 
 /**
  * Creates a new Firequeue instance.
@@ -22,14 +22,20 @@ import { defaultSerializer, removeTrailingSlash } from "./utils.js";
  * @param options.firestore - A `FirebaseFirestore.Firestore` instance from the `firebase-admin` SDK.
  * @param options.serializer - An optional custom serializer for handling data persistence.
  *   Defaults to a JSON-based serializer that handles `undefined`, `null`, and `NaN`.
+ * @param options.logLevel - An optional log level.
  * @returns A Firequeue instance with methods for creating, invoking, and managing tasks.
  */
 export function createFirequeue(options: {
   firestore: FirebaseFirestore.Firestore;
   serializer?: Serializer;
+  logLevel?: LogSeverity;
 }) {
   const storage = new FirestoreTasksStorage(options.firestore);
   const serializer = options.serializer ?? defaultSerializer;
+
+  if (options.logLevel) {
+    logger.setLogSeverity(options.logLevel);
+  }
 
   /**
    * Creates a Cloud Function trigger that executes a workflow.

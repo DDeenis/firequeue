@@ -1,4 +1,6 @@
+import type { LogEntry, LogSeverity } from "firebase-functions/logger";
 import { type Serializer } from "./types.js";
+import * as firebaseLogger from "firebase-functions/logger";
 
 export const removeTrailingSlash = (str: string) => str.replace(/\/+$/, "");
 
@@ -31,3 +33,61 @@ export const defaultSerializer: Serializer = {
     return JSON.parse(str);
   },
 };
+
+type FirebaseLogger = typeof firebaseLogger.logger;
+
+class Logger implements FirebaseLogger {
+  private logSeverity: LogSeverity = "INFO";
+  private logSeverityMap: Record<LogSeverity, number> = {
+    DEBUG: 0,
+    INFO: 1,
+    NOTICE: 2,
+    WARNING: 3,
+    ERROR: 4,
+    CRITICAL: 5,
+    ALERT: 6,
+    EMERGENCY: 7,
+  };
+
+  public setLogSeverity(severity: LogSeverity) {
+    this.logSeverity = severity;
+  }
+
+  public write(entry: LogEntry) {
+    firebaseLogger.write(entry);
+  }
+
+  public debug(...args: any[]) {
+    if (this.logSeverityMap["DEBUG"] >= this.logSeverityMap[this.logSeverity]) {
+      firebaseLogger.debug(...args);
+    }
+  }
+
+  public log(...args: any[]) {
+    if (this.logSeverityMap["INFO"] >= this.logSeverityMap[this.logSeverity]) {
+      firebaseLogger.log(...args);
+    }
+  }
+
+  public info(...args: any[]) {
+    if (this.logSeverityMap["INFO"] >= this.logSeverityMap[this.logSeverity]) {
+      firebaseLogger.info(...args);
+    }
+  }
+
+  public warn(...args: any[]) {
+    if (
+      this.logSeverityMap["WARNING"] >= this.logSeverityMap[this.logSeverity]
+    ) {
+      firebaseLogger.warn(...args);
+    }
+  }
+
+  public error(...args: any[]) {
+    if (this.logSeverityMap["ERROR"] >= this.logSeverityMap[this.logSeverity]) {
+      firebaseLogger.error(...args);
+    }
+  }
+}
+
+export const logger = new Logger();
