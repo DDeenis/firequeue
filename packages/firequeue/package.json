@@ -5,9 +5,6 @@
   "homepage": "https://github.com/DDeenis/firequeue",
   "main": "lib/index.js",
   "type": "module",
-  "files": [
-    "../../README.md"
-  ],
   "scripts": {
     "clean": "rimraf lib/",
     "prebuild": "pnpm run clean",
