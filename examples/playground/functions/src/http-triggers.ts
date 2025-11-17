@@ -14,8 +14,7 @@ export const invokeTestTask = onRequest(async (request, response) => {
     const message = "Successfully invoked test-task.";
     logger.info(message);
     response.send(message);
-  } catch (error)
-  {
+  } catch (error) {
     const message = "Failed to invoke test-task.";
     logger.error(message, error);
     response.status(500).send(message);

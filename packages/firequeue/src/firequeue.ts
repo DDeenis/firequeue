@@ -25,7 +25,9 @@ import type { LogSeverity } from "firebase-functions/logger";
  * @param options.logLevel - An optional log level.
  * @returns A Firequeue instance with methods for creating, invoking, and managing tasks.
  */
-export function createFirequeue(options: {
+export function createFirequeue<
+  FunctionsRegistry extends { [taskId: string]: unknown }
+>(options: {
   firestore: FirebaseFirestore.Firestore;
   serializer?: Serializer;
   logLevel?: LogSeverity;
@@ -45,12 +47,12 @@ export function createFirequeue(options: {
    * @param run - The async function containing the workflow logic.
    * @returns A Firestore trigger that automatically handles tasks and steps execution.
    */
-  function createTask(
-    taskId: string,
+  function createTask<TID extends Extract<keyof FunctionsRegistry, string>>(
+    taskId: TID,
     taskOptions: TaskOptions,
     run: (params: {
       step: StepFactory;
-      input: unknown | null;
+      input: FunctionsRegistry[TID] | null;
       taskInstanceId: string;
     }) => Promise<void>
   ) {
@@ -241,7 +243,7 @@ export function createFirequeue(options: {
 
         await run({
           step: stepsFactory,
-          input: deSerializedTaskInput,
+          input: deSerializedTaskInput as FunctionsRegistry[TID],
           taskInstanceId: taskSnapshot.instanceId,
         });
 
@@ -332,14 +334,14 @@ export function createFirequeue(options: {
    * @param options.input - An optional data payload to pass to the workflow. The data must be serializable.
    * @returns A promise that resolves with the created task document.
    */
-  function invokeTask({
+  function invokeTask<TID extends Extract<keyof FunctionsRegistry, string>>({
     taskId,
     collectionPath,
     input,
   }: {
-    taskId: string;
+    taskId: TID;
     collectionPath: string;
-    input?: unknown;
+    input?: FunctionsRegistry[TID];
   }) {
     logger.debug(`[FireQueue] Created task function '${taskId}'`);
 

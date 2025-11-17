@@ -1,20 +1,16 @@
 import { firequeue } from "./init";
 import * as admin from "firebase-admin";
 
-/**
- * Defines the expected shape of the input data for our task.
- * The `unknown` type from the function signature will be cast to this.
- */
-interface ProductReviewData {
-  productId: string;
-}
-
 export const onProductReviewWritten = firequeue.createTask(
   "aggregate-product-reviews",
   { collectionPath: "products-queue" }, // Assuming tasks are written to a 'queue' collection
   async ({ step, input }) => {
+    if (!input) {
+      throw new Error("Input was not provided");
+    }
+
     // Cast the 'unknown' input to our specific data type.
-    const { productId } = input as ProductReviewData;
+    const { productId } = input;
 
     const db = admin.firestore();
     const productRef = db.collection("products").doc(productId);
