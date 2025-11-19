@@ -77,14 +77,18 @@ export class FirestoreTasksStorage {
       .then(({ docs }) => docs.map((doc) => doc.data()));
   }
 
-  public async createStep(taskDocumentPath: string, stepId: string) {
+  public async createStep(
+    taskDocumentPath: string,
+    stepId: string,
+    status = StepStatus.Scheduled
+  ) {
     const stepRef = this.getStepRef(taskDocumentPath, stepId);
 
     return stepRef.set(
       {
         stepId,
         serializedResult: null,
-        status: StepStatus.Scheduled,
+        status,
       } satisfies Step,
       { merge: false }
     );

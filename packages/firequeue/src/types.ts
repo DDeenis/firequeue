@@ -1,3 +1,5 @@
+import type { MemoryOption } from "firebase-functions";
+
 export interface Task {
   /** ID specified by the user */
   taskId: string;
@@ -11,7 +13,11 @@ export interface Task {
 
 export interface TaskOptions {
   collectionPath: string;
+  region?: string;
+  memory?: MemoryOption;
   concurrency?: number;
+  minInstances?: number;
+  maxInstances?: number;
   secrets?: string[];
   timeoutSeconds?: number;
 }
@@ -36,6 +42,7 @@ export interface Step {
 
 export enum StepStatus {
   Scheduled = "scheduled",
+  Paused = "paused",
   Pending = "pending",
   Completed = "completed",
   Cancelled = "cancelled",
@@ -44,6 +51,7 @@ export enum StepStatus {
 
 export interface StepFactory {
   run: <T>(id: string, run: () => Promise<T>) => Promise<T>;
+  paused: <T>(id: string, run: () => Promise<T>) => Promise<T | null>;
 }
 
 export interface Serializer {

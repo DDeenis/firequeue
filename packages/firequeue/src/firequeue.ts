@@ -1,5 +1,8 @@
 import {
+  Change,
   type DocumentOptions,
+  type DocumentSnapshot,
+  type FirestoreEvent,
   onDocumentWritten,
 } from "firebase-functions/firestore";
 import {
@@ -52,6 +55,10 @@ export function createFirequeue<
     taskOptions: TaskOptions,
     run: (params: {
       step: StepFactory;
+      event: FirestoreEvent<
+        Change<DocumentSnapshot> | undefined,
+        Record<string, string>
+      >;
       input: FunctionsRegistry[TID] | null;
       taskInstanceId: string;
     }) => Promise<void>
@@ -64,6 +71,10 @@ export function createFirequeue<
     // TODO: add more options
     const functionOptions: DocumentOptions = {
       document: documentPath,
+      region: taskOptions.region,
+      memory: taskOptions.memory,
+      minInstances: taskOptions.minInstances,
+      maxInstances: taskOptions.maxInstances,
       concurrency: taskOptions.concurrency,
       secrets: taskOptions.secrets ?? [],
       timeoutSeconds: taskOptions.timeoutSeconds,
@@ -205,6 +216,14 @@ export function createFirequeue<
               return serializer.parse(step.serializedResult) as any;
             }
 
+            case StepStatus.Paused: {
+              logger.debug(
+                `[FireQueue] Step '${step.stepId}' for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is paused, skipping`
+              );
+
+              return null;
+            }
+
             case StepStatus.Cancelled: {
               logger.debug(
                 `[FireQueue] Step '${step.stepId}' for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is cancelled, skipping`
@@ -222,9 +241,27 @@ export function createFirequeue<
             }
 
             default:
-              const x = step.status;
+              const x: never = step.status;
               throw new Error(`Unsupported step status: ${x}`);
           }
+        },
+
+        paused: async (stepId, run) => {
+          const step = await storage.getStep(taskDocumentPath, stepId);
+
+          if (!step) {
+            logger.info(
+              `[FireQueue] Step '${stepId}' doesn't exist for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}), creating`
+            );
+
+            await storage.createStep(
+              taskDocumentPath,
+              stepId,
+              StepStatus.Paused
+            );
+          }
+
+          return stepsFactory.run(stepId, run);
         },
       };
 
@@ -243,6 +280,7 @@ export function createFirequeue<
 
         await run({
           step: stepsFactory,
+          event,
           input: deSerializedTaskInput as FunctionsRegistry[TID],
           taskInstanceId: taskSnapshot.instanceId,
         });
