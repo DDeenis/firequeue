@@ -1,4 +1,10 @@
-import { StepStatus, TaskStatus, type Step, type Task } from "./types.js";
+import {
+  StepStatus,
+  TaskStatus,
+  type FirequeueEvent,
+  type Step,
+  type Task,
+} from "./types.js";
 import { removeTrailingSlash } from "./utils.js";
 
 export class FirestoreTasksStorage {
@@ -40,7 +46,7 @@ export class FirestoreTasksStorage {
       serializedInputData,
     };
 
-    return collection.doc(id).set(newTask);
+    return collection.doc(id).set(newTask, { merge: false });
   }
 
   public updateTask(taskDocumentPath: string, updates: Partial<Task>) {
@@ -77,19 +83,15 @@ export class FirestoreTasksStorage {
       .then(({ docs }) => docs.map((doc) => doc.data()));
   }
 
-  public async createStep(
-    taskDocumentPath: string,
-    stepId: string,
-    status = StepStatus.Scheduled
-  ) {
+  public async createStep(taskDocumentPath: string, stepId: string) {
     const stepRef = this.getStepRef(taskDocumentPath, stepId);
 
     return stepRef.set(
       {
         stepId,
         serializedResult: null,
-        status,
-      } satisfies Step,
+        status: StepStatus.Scheduled,
+      },
       { merge: false }
     );
   }
@@ -134,5 +136,61 @@ export class FirestoreTasksStorage {
 
       trx.update(taskRef, { status: taskStatus });
     });
+  }
+
+  public getEventRef(taskDocumentPath: string, eventId: string) {
+    const eventsCollection = this.firestore.collection(
+      `${taskDocumentPath}/events`
+    );
+
+    return eventsCollection.doc(
+      eventId
+    ) as FirebaseFirestore.DocumentReference<FirequeueEvent>;
+  }
+
+  public getEvent(
+    taskDocumentPath: string,
+    eventId: string
+  ): Promise<FirequeueEvent | null> {
+    return this.getEventRef(taskDocumentPath, eventId)
+      .get()
+      .then((doc) => doc.data() ?? null);
+  }
+
+  public getAndRemoveEvent(
+    taskDocumentPath: string,
+    eventId: string
+  ): Promise<FirequeueEvent | null> {
+    const eventRef = this.getEventRef(taskDocumentPath, eventId);
+
+    return this.firestore.runTransaction(async (trx) => {
+      const eventDoc = await trx.get(eventRef);
+
+      if (!eventDoc.exists) return null;
+
+      const eventData = eventDoc.data() ?? null;
+
+      trx.delete(eventRef);
+
+      return eventData;
+    });
+  }
+
+  public createEvent(taskDocumentPath: string, eventId: string) {
+    const eventRef = this.getEventRef(taskDocumentPath, eventId);
+
+    return eventRef.set(
+      {
+        eventId,
+        createdAt: Date.now(),
+      },
+      { merge: false }
+    );
+  }
+
+  public deleteEvent(taskDocumentPath: string, eventId: string) {
+    const eventRef = this.getEventRef(taskDocumentPath, eventId);
+
+    return eventRef.delete();
   }
 }

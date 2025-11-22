@@ -10,13 +10,24 @@ import {
   type StepFactory,
   type Task,
   type TaskOptions,
+  EVENT_NOT_TRIGGERED,
+  STEP_CANCELLED,
+  STEP_COMPLETED,
+  STEP_CREATED,
+  STEP_ERROR,
+  STEP_PENDING,
   StepStatus,
   TaskStatus,
 } from "./types.js";
-import { isStepExecutionResult, throwStepStatus } from "./step.js";
+import { isStepExecutionResult, throwStepResult } from "./steps.js";
 import { FirestoreTasksStorage } from "./storage.js";
 import { defaultSerializer, removeTrailingSlash, logger } from "./utils.js";
 import type { LogSeverity } from "firebase-functions/logger";
+import {
+  isEventExecutionResult,
+  isEventExpired,
+  throwEventResult,
+} from "./events.js";
 
 /**
  * Creates a new Firequeue instance.
@@ -68,16 +79,9 @@ export function createFirequeue<
     const collectionPath = removeTrailingSlash(taskOptions.collectionPath);
     const documentPath = `${collectionPath}/{taskId}`;
 
-    // TODO: add more options
     const functionOptions: DocumentOptions = {
+      ...taskOptions,
       document: documentPath,
-      region: taskOptions.region,
-      memory: taskOptions.memory,
-      minInstances: taskOptions.minInstances,
-      maxInstances: taskOptions.maxInstances,
-      concurrency: taskOptions.concurrency,
-      secrets: taskOptions.secrets ?? [],
-      timeoutSeconds: taskOptions.timeoutSeconds,
     };
 
     return onDocumentWritten(functionOptions, async (event) => {
@@ -118,6 +122,7 @@ export function createFirequeue<
           return;
         }
 
+        case TaskStatus.Waiting:
         case TaskStatus.Scheduled: {
           logger.info(
             `[FireQueue] Task '${taskId}' execution continued with status: ${taskSnapshot.status}`
@@ -126,7 +131,7 @@ export function createFirequeue<
         }
 
         default: {
-          const x = taskSnapshot.status;
+          const x: never = taskSnapshot.status;
           throw new Error(`Unchecked task status: ${x}`);
         }
       }
@@ -138,7 +143,7 @@ export function createFirequeue<
           // optimisation: re-schedule function only if it tries to execute more then one step at a time (there is more steps)
           if (stepExecuted) {
             // throw to re-run the task (successfull execution)
-            throwStepStatus(stepId, StepStatus.Completed);
+            throwStepResult(stepId, STEP_COMPLETED);
           }
 
           const step = await storage.getStep(taskDocumentPath, stepId);
@@ -149,7 +154,7 @@ export function createFirequeue<
             );
 
             await storage.createStep(taskDocumentPath, stepId);
-            throwStepStatus(stepId, StepStatus.Scheduled);
+            throwStepResult(stepId, STEP_CREATED);
           }
 
           logger.debug(
@@ -192,7 +197,7 @@ export function createFirequeue<
                   serializedResult: null,
                   error: (error as Error).message ?? undefined,
                 });
-                throwStepStatus(stepId, StepStatus.Error);
+                throwStepResult(stepId, STEP_ERROR);
               }
             }
 
@@ -201,7 +206,7 @@ export function createFirequeue<
                 `[FireQueue] Step '${step.stepId}' for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is pending, skipping`
               );
 
-              throwStepStatus(stepId, StepStatus.Pending);
+              throwStepResult(stepId, STEP_PENDING);
             }
 
             case StepStatus.Completed: {
@@ -216,20 +221,12 @@ export function createFirequeue<
               return serializer.parse(step.serializedResult) as any;
             }
 
-            case StepStatus.Paused: {
-              logger.debug(
-                `[FireQueue] Step '${step.stepId}' for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is paused, skipping`
-              );
-
-              return null;
-            }
-
             case StepStatus.Cancelled: {
               logger.debug(
                 `[FireQueue] Step '${step.stepId}' for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is cancelled, skipping`
               );
 
-              throwStepStatus(stepId, StepStatus.Cancelled);
+              throwStepResult(stepId, STEP_CANCELLED);
             }
 
             case StepStatus.Error: {
@@ -237,7 +234,7 @@ export function createFirequeue<
                 `[FireQueue] Step '${step.stepId}' for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) has errored, skipping`
               );
 
-              throwStepStatus(stepId, StepStatus.Error);
+              throwStepResult(stepId, STEP_ERROR);
             }
 
             default:
@@ -246,22 +243,50 @@ export function createFirequeue<
           }
         },
 
-        paused: async (stepId, run) => {
-          const step = await storage.getStep(taskDocumentPath, stepId);
+        waitForEvent: async (eventOptions) => {
+          const consumedEvent = await storage.getAndRemoveEvent(
+            taskDocumentPath,
+            eventOptions.event
+          );
 
-          if (!step) {
-            logger.info(
-              `[FireQueue] Step '${stepId}' doesn't exist for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}), creating`
+          // event was not triggered
+          if (
+            !consumedEvent ||
+            isEventExpired(consumedEvent, eventOptions.timeout)
+          ) {
+            logger.debug(
+              `Event '${eventOptions.event}' was not received yet or has already expired`
             );
 
-            await storage.createStep(
-              taskDocumentPath,
-              stepId,
-              StepStatus.Paused
-            );
+            throwEventResult(eventOptions.event, EVENT_NOT_TRIGGERED);
           }
 
-          return stepsFactory.run(stepId, run);
+          // continue execution
+          return;
+        },
+
+        waitForSingleEvent: async (eventOptions) => {
+          // don't delete event
+          const eventData = await storage.getEvent(
+            taskDocumentPath,
+            eventOptions.event
+          );
+
+          if (!eventData) {
+            logger.debug(`Event '${eventOptions.event}' was not received yet`);
+
+            throwEventResult(eventOptions.event, EVENT_NOT_TRIGGERED);
+          }
+
+          if (isEventExpired(eventData, eventOptions.timeout)) {
+            logger.debug(
+              `Event '${eventOptions.event}' has already expired after a ${eventOptions.timeout} timeout`
+            );
+
+            throwEventResult(eventOptions.event, EVENT_NOT_TRIGGERED);
+          }
+
+          return;
         },
       };
 
@@ -297,7 +322,7 @@ export function createFirequeue<
 
         return;
       } catch (err) {
-        if (isStepExecutionResult(err, StepStatus.Completed)) {
+        if (isStepExecutionResult(err, STEP_COMPLETED)) {
           logger.debug(
             `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) step '${err.stepId}' finished executing step successfully`
           );
@@ -310,7 +335,7 @@ export function createFirequeue<
           await storage.updateTask(taskDocumentPath, {
             status: TaskStatus.Scheduled,
           });
-        } else if (isStepExecutionResult(err, StepStatus.Scheduled)) {
+        } else if (isStepExecutionResult(err, STEP_CREATED)) {
           logger.debug(
             `[FireQueue] Scheduling task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) to execute a new step`
           );
@@ -319,7 +344,7 @@ export function createFirequeue<
             status: TaskStatus.Scheduled,
             error: null,
           });
-        } else if (isStepExecutionResult(err, StepStatus.Pending)) {
+        } else if (isStepExecutionResult(err, STEP_PENDING)) {
           logger.debug(
             `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is now Pending due to step '${err.stepId}' status`
           );
@@ -328,7 +353,7 @@ export function createFirequeue<
             status: TaskStatus.Pending,
             error: null,
           });
-        } else if (isStepExecutionResult(err, StepStatus.Cancelled)) {
+        } else if (isStepExecutionResult(err, STEP_CANCELLED)) {
           logger.debug(
             `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is now Cancelled due to step '${err.stepId}' status`
           );
@@ -337,7 +362,7 @@ export function createFirequeue<
             status: TaskStatus.Cancelled,
             error: "Cancelled due to a step cancellation",
           });
-        } else if (isStepExecutionResult(err, StepStatus.Error)) {
+        } else if (isStepExecutionResult(err, STEP_ERROR)) {
           logger.debug(
             `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is now Error due to step '${err.stepId}' status`
           );
@@ -346,6 +371,16 @@ export function createFirequeue<
             status: TaskStatus.Error,
             error: "Stopped due to a step error",
           });
+        } else if (isEventExecutionResult(err, EVENT_NOT_TRIGGERED)) {
+          logger.debug(
+            `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is waiting for a '${err.eventId}' event`
+          );
+
+          if (taskSnapshot.status !== TaskStatus.Waiting) {
+            await storage.updateTask(taskDocumentPath, {
+              status: TaskStatus.Waiting,
+            });
+          }
         } else {
           logger.debug(
             `[FireQueue] Task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is now Error due to execution error`,
@@ -450,5 +485,23 @@ export function createFirequeue<
     });
   }
 
-  return { createTask, invokeTask, cancelTask, cancelSteps, scheduleSteps };
+  async function sendEvent(input: {
+    taskInstanceId: string;
+    collectionPath: string;
+    event: string;
+  }) {
+    await storage.createEvent(storage.getTaskDocumentPath(input), input.event);
+    await storage.updateTask(storage.getTaskDocumentPath(input), {
+      status: TaskStatus.Scheduled,
+    });
+  }
+
+  return {
+    createTask,
+    invokeTask,
+    cancelTask,
+    cancelSteps,
+    scheduleSteps,
+    sendEvent,
+  };
 }

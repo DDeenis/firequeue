@@ -1,4 +1,4 @@
-import type { MemoryOption } from "firebase-functions";
+import type { DocumentOptions } from "firebase-functions/firestore";
 
 export interface Task {
   /** ID specified by the user */
@@ -11,20 +11,14 @@ export interface Task {
   serializedInputData: string | null;
 }
 
-export interface TaskOptions {
+export interface TaskOptions extends Omit<DocumentOptions, "document"> {
   collectionPath: string;
-  region?: string;
-  memory?: MemoryOption;
-  concurrency?: number;
-  minInstances?: number;
-  maxInstances?: number;
-  secrets?: string[];
-  timeoutSeconds?: number;
 }
 
 export enum TaskStatus {
   Scheduled = "scheduled",
   Pending = "pending",
+  Waiting = "waiting",
   Completed = "completed",
   Cancelled = "cancelled",
   Error = "error",
@@ -42,16 +36,36 @@ export interface Step {
 
 export enum StepStatus {
   Scheduled = "scheduled",
-  Paused = "paused",
   Pending = "pending",
   Completed = "completed",
   Cancelled = "cancelled",
   Error = "error",
 }
 
+export interface FirequeueEvent {
+  eventId: string;
+  createdAt: number;
+}
+
+interface EventOptions {
+  event: string;
+  timeout?: TimeString;
+}
+
+export type TimeString =
+  | `${number}ms`
+  | `${number}s`
+  | `${number}m`
+  | `${number}h`
+  | `${number}d`
+  | `${number}w`
+  | `${number}mo`
+  | `${number}yr`;
+
 export interface StepFactory {
   run: <T>(id: string, run: () => Promise<T>) => Promise<T>;
-  paused: <T>(id: string, run: () => Promise<T>) => Promise<T | null>;
+  waitForEvent(opts: EventOptions): Promise<void>;
+  waitForSingleEvent(opts: EventOptions): Promise<void>;
 }
 
 export interface Serializer {
@@ -59,8 +73,10 @@ export interface Serializer {
   parse(str: string): unknown;
 }
 
-export const STEP_CREATED = Symbol("step created");
-export const STEP_COMPLETED = Symbol("step completed");
-export const STEP_PENDING = Symbol("step pending");
-export const STEP_CANCELLED = Symbol("step cancelled");
-export const STEP_ERROR = Symbol("step error");
+export const STEP_CREATED = Symbol("STEP_CREATED");
+export const STEP_COMPLETED = Symbol("STEP_COMPLETED");
+export const STEP_PENDING = Symbol("STEP_PENDING");
+export const STEP_CANCELLED = Symbol("STEP_CANCELLED");
+export const STEP_ERROR = Symbol("STEP_ERROR");
+
+export const EVENT_NOT_TRIGGERED = Symbol("EVENT_NOT_TRIGGERED");
