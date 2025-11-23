@@ -1,6 +1,8 @@
 import type { LogEntry, LogSeverity } from "firebase-functions/logger";
 import { type Serializer, type TimeString } from "./types.js";
 import * as firebaseLogger from "firebase-functions/logger";
+import type { Expression } from "firebase-functions/params";
+import type { RESET_VALUE } from "firebase-functions/options";
 
 export const removeTrailingSlash = (str: string) => str.replace(/\/+$/, "");
 
@@ -134,3 +136,19 @@ export const timeStringToMs = (str: TimeString): number => {
       throw new Error(`Unknown time unit: ${unit}`);
   }
 };
+
+// firestore utils
+
+export function unwrapFirestoreOptionsValue<
+  T extends string | number | boolean | string[]
+>(val: T | Expression<T> | typeof RESET_VALUE | undefined): T | undefined {
+  if (typeof val !== "object" || Array.isArray(val)) {
+    return val;
+  }
+
+  if ("value" in val) {
+    return val.value();
+  }
+
+  return undefined;
+}

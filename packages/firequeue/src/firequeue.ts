@@ -21,7 +21,12 @@ import {
 } from "./types.js";
 import { isStepExecutionResult, throwStepResult } from "./steps.js";
 import { FirestoreTasksStorage } from "./storage.js";
-import { defaultSerializer, removeTrailingSlash, logger } from "./utils.js";
+import {
+  defaultSerializer,
+  removeTrailingSlash,
+  logger,
+  unwrapFirestoreOptionsValue,
+} from "./utils.js";
 import type { LogSeverity } from "firebase-functions/logger";
 import {
   isEventExecutionResult,
@@ -136,6 +141,17 @@ export function createFirequeue<
         }
       }
 
+      // Calculate step timeout for zombie detection
+      const DEFAULT_TIMEOUT_SECONDS = 60;
+      const configuredTimeout = unwrapFirestoreOptionsValue(
+        taskOptions.timeoutSeconds
+      );
+      const timeoutSeconds =
+        configuredTimeout !== undefined
+          ? configuredTimeout
+          : DEFAULT_TIMEOUT_SECONDS;
+      const STEP_TIMEOUT = timeoutSeconds + 10; // Timeout + buffer for zombie detection
+
       let stepExecuted = false;
 
       const stepsFactory: StepFactory = {
@@ -168,6 +184,7 @@ export function createFirequeue<
                 await storage.updateStep(taskDocumentPath, stepId, {
                   status: StepStatus.Pending,
                   error: null,
+                  startedAt: Date.now(),
                 });
 
                 logger.debug(
@@ -202,6 +219,24 @@ export function createFirequeue<
             }
 
             case StepStatus.Pending: {
+              // Check if step has been pending too long (zombie step detection)
+              if (step.startedAt) {
+                const pendingDuration = (Date.now() - step.startedAt) / 1000;
+                if (pendingDuration > STEP_TIMEOUT) {
+                  logger.error(
+                    `[FireQueue] Step '${step.stepId}' has been pending for ${pendingDuration}s (timeout: ${STEP_TIMEOUT}s), marking as error`
+                  );
+
+                  await storage.updateStep(taskDocumentPath, stepId, {
+                    status: StepStatus.Error,
+                    error: `Step execution timed out after ${pendingDuration.toFixed(
+                      0
+                    )}s`,
+                  });
+                  throwStepResult(stepId, STEP_ERROR);
+                }
+              }
+
               logger.debug(
                 `[FireQueue] Step '${step.stepId}' for task '${taskSnapshot.taskId}' (instance ${taskSnapshot.instanceId}) is pending, skipping`
               );

@@ -32,6 +32,8 @@ export interface Step {
   status: StepStatus;
   /** Error message */
   error?: string | null;
+  /** Timestamp when step execution started (for detecting zombie steps) */
+  startedAt?: number;
 }
 
 export enum StepStatus {
