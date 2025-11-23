@@ -55,6 +55,19 @@ export class FirestoreTasksStorage {
     return taskDocRef.update(updates);
   }
 
+  public async scheduleTaskIfNotRunning(taskDocumentPath: string) {
+    const taskDocRef = this.getTaskRef(taskDocumentPath);
+
+    await this.firestore.runTransaction(async (trx) => {
+      const taskDoc = await trx.get(taskDocRef);
+      const taskData = taskDoc.data();
+
+      if (!taskData || taskData.status === TaskStatus.Running) return;
+
+      trx.update(taskDocRef, { status: TaskStatus.Scheduled });
+    });
+  }
+
   public getStepRef(taskDocumentPath: string, stepId: string) {
     const stepsCollection = this.firestore.collection(
       `${taskDocumentPath}/steps`

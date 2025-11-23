@@ -119,7 +119,7 @@ export function createFirequeue<
 
       switch (taskSnapshot.status) {
         case TaskStatus.Completed:
-        case TaskStatus.Pending:
+        case TaskStatus.Running:
         case TaskStatus.Cancelled:
         case TaskStatus.Error: {
           logger.info(
@@ -183,7 +183,7 @@ export function createFirequeue<
               try {
                 stepExecuted = true;
                 await storage.updateStep(taskDocumentPath, stepId, {
-                  status: StepStatus.Pending,
+                  status: StepStatus.Running,
                   error: null,
                   startedAt: Date.now(),
                 });
@@ -219,7 +219,7 @@ export function createFirequeue<
               }
             }
 
-            case StepStatus.Pending: {
+            case StepStatus.Running: {
               // Check if step has been pending too long (zombie step detection)
               if (step.startedAt) {
                 const pendingDuration = (Date.now() - step.startedAt) / 1000;
@@ -338,7 +338,7 @@ export function createFirequeue<
 
       try {
         await storage.updateTask(taskDocumentPath, {
-          status: TaskStatus.Pending,
+          status: TaskStatus.Running,
         });
 
         logger.debug(
@@ -392,7 +392,7 @@ export function createFirequeue<
           );
 
           await storage.updateTask(taskDocumentPath, {
-            status: TaskStatus.Pending,
+            status: TaskStatus.Running,
             error: null,
           });
         } else if (isStepExecutionResult(err, STEP_CANCELLED)) {
@@ -515,7 +515,7 @@ export function createFirequeue<
    * @param input.stepIds - An array of step IDs to reschedule.
    * @returns A promise that resolves when the steps and task are updated.
    */
-  function scheduleSteps(input: {
+  function invalidateTaskAndSteps(input: {
     taskInstanceId: string;
     collectionPath: string;
     stepIds: string[];
@@ -533,9 +533,7 @@ export function createFirequeue<
     event: string;
   }) {
     await storage.createEvent(storage.getTaskDocumentPath(input), input.event);
-    await storage.updateTask(storage.getTaskDocumentPath(input), {
-      status: TaskStatus.Scheduled,
-    });
+    await storage.scheduleTaskIfNotRunning(storage.getTaskDocumentPath(input));
   }
 
   return {
@@ -543,7 +541,7 @@ export function createFirequeue<
     invokeTask,
     cancelTask,
     cancelSteps,
-    scheduleSteps,
+    invalidateTaskAndSteps,
     sendEvent,
   };
 }

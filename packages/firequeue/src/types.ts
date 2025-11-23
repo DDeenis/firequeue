@@ -13,16 +13,19 @@ export interface Task {
 
 export interface TaskOptions extends Omit<DocumentOptions, "document"> {
   collectionPath: string;
+  executionMode?: TaskExecutionMode;
 }
 
 export enum TaskStatus {
   Scheduled = "scheduled",
-  Pending = "pending",
+  Running = "running",
   Waiting = "waiting",
   Completed = "completed",
   Cancelled = "cancelled",
   Error = "error",
 }
+
+export type TaskExecutionMode = "serializable" | "speculative";
 
 export interface Step {
   /** ID provided by the user */
@@ -38,7 +41,7 @@ export interface Step {
 
 export enum StepStatus {
   Scheduled = "scheduled",
-  Pending = "pending",
+  Running = "running",
   Completed = "completed",
   Cancelled = "cancelled",
   Error = "error",
