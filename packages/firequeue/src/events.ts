@@ -38,5 +38,5 @@ export function isEventExpired(
 
   if (timeoutMs === 0) return true;
 
-  return event.createdAt <= Date.now() + timeoutMs;
+  return event.createdAt + timeoutMs <= Date.now();
 }

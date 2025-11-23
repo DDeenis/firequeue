@@ -1,4 +1,5 @@
 import {
+  EventStatus,
   StepStatus,
   TaskStatus,
   type FirequeueEvent,
@@ -157,7 +158,7 @@ export class FirestoreTasksStorage {
       .then((doc) => doc.data() ?? null);
   }
 
-  public getAndRemoveEvent(
+  public getAndConsumeEvent(
     taskDocumentPath: string,
     eventId: string
   ): Promise<FirequeueEvent | null> {
@@ -168,11 +169,23 @@ export class FirestoreTasksStorage {
 
       if (!eventDoc.exists) return null;
 
-      const eventData = eventDoc.data() ?? null;
+      const eventData = eventDoc.data();
 
-      trx.delete(eventRef);
+      if (!eventData || eventData.status === EventStatus.Consumed) return null;
+
+      trx.update(eventRef, {
+        status: EventStatus.Consumed,
+      });
 
       return eventData;
+    });
+  }
+
+  public consumeEvent(taskDocumentPath: string, eventId: string) {
+    const eventRef = this.getEventRef(taskDocumentPath, eventId);
+
+    return eventRef.update({
+      status: EventStatus.Consumed,
     });
   }
 
@@ -182,15 +195,10 @@ export class FirestoreTasksStorage {
     return eventRef.set(
       {
         eventId,
+        status: EventStatus.Received,
         createdAt: Date.now(),
       },
       { merge: false }
     );
-  }
-
-  public deleteEvent(taskDocumentPath: string, eventId: string) {
-    const eventRef = this.getEventRef(taskDocumentPath, eventId);
-
-    return eventRef.delete();
   }
 }

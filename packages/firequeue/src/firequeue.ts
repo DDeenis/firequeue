@@ -11,6 +11,7 @@ import {
   type Task,
   type TaskOptions,
   EVENT_NOT_TRIGGERED,
+  EventStatus,
   STEP_CANCELLED,
   STEP_COMPLETED,
   STEP_CREATED,
@@ -279,7 +280,7 @@ export function createFirequeue<
         },
 
         waitForEvent: async (eventOptions) => {
-          const consumedEvent = await storage.getAndRemoveEvent(
+          const consumedEvent = await storage.getAndConsumeEvent(
             taskDocumentPath,
             eventOptions.event
           );
@@ -313,12 +314,18 @@ export function createFirequeue<
             throwEventResult(eventOptions.event, EVENT_NOT_TRIGGERED);
           }
 
-          if (isEventExpired(eventData, eventOptions.timeout)) {
+          const isConsumed = eventData.status === EventStatus.Consumed;
+
+          if (!isConsumed && isEventExpired(eventData, eventOptions.timeout)) {
             logger.debug(
               `Event '${eventOptions.event}' has already expired after a ${eventOptions.timeout} timeout`
             );
 
             throwEventResult(eventOptions.event, EVENT_NOT_TRIGGERED);
+          }
+
+          if (!isConsumed) {
+            await storage.consumeEvent(taskDocumentPath, eventOptions.event);
           }
 
           return;

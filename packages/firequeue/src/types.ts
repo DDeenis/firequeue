@@ -46,12 +46,18 @@ export enum StepStatus {
 
 export interface FirequeueEvent {
   eventId: string;
+  status: EventStatus;
   createdAt: number;
 }
 
 interface EventOptions {
   event: string;
   timeout?: TimeString;
+}
+
+export enum EventStatus {
+  Received = "received",
+  Consumed = "consumed",
 }
 
 export type TimeString =
