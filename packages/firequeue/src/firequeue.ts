@@ -79,6 +79,7 @@ export function createFirequeue<
 
     const collectionPath = removeTrailingSlash(taskOptions.collectionPath);
     const documentPath = `${collectionPath}/{taskId}`;
+    const isSpeculativeExecution = taskOptions.executionMode === "speculative";
 
     const functionOptions: DocumentOptions = {
       ...taskOptions,
@@ -148,12 +149,27 @@ export function createFirequeue<
           : DEFAULT_TIMEOUT_SECONDS;
       const STEP_TIMEOUT = timeoutSeconds + 10; // Timeout + buffer for zombie detection
 
+      const stepsAbortController = new AbortController();
+
+      if (isSpeculativeExecution) {
+        const EXECUTION_SAFETY_BUFFER_SECONDS = 5;
+        const ABORT_AFTER_SECONDS =
+          timeoutSeconds - EXECUTION_SAFETY_BUFFER_SECONDS;
+
+        setTimeout(() => {
+          stepsAbortController.abort();
+        }, ABORT_AFTER_SECONDS * 1000);
+      }
+
       let stepExecuted = false;
 
       const stepsFactory: StepFactory = {
         run: async (stepId, run) => {
-          // optimisation: re-schedule function only if it tries to execute more then one step at a time (there is more steps)
-          if (stepExecuted) {
+          if (
+            // optimisation: re-schedule function only if it tries to execute more than one step at a time (there is more steps)
+            (stepExecuted && !isSpeculativeExecution) ||
+            (isSpeculativeExecution && stepsAbortController.signal.aborted)
+          ) {
             // throw to re-run the task (successfull execution)
             throwStepResult(stepId, STEP_COMPLETED);
           }
