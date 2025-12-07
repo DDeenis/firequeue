@@ -1,8 +1,41 @@
-# 🔥 Firequeue
+# Firequeue
 
-**A durable workflow orchestrator for Firebase Cloud Functions, inspired by Inngest.**
+A durable workflow orchestrator for Firebase Cloud Functions.
 
-Firequeue allows you to write long-running, reliable, multi-step workflows (tasks) for Firebase that can pause and resume, surviving function timeouts and failures. It provides a simple, `async/await` API built on top of Cloud Functions and Firestore, enabling you to define complex, stateful processes with ease.
+Firequeue lets you write multi-step workflows that persist state to Firestore. Each step runs exactly once, and workflows can pause and resume across function invocations.
+
+## Table of Contents
+
+- [Installation](#installation)
+- [How It Works](#how-it-works)
+  - [Execution Modes](#execution-modes)
+  - [Task Statuses](#task-statuses)
+  - [Step Statuses](#step-statuses)
+- [Usage](#usage)
+  - [Initialization](#initialization)
+  - [Defining a Task](#defining-a-task)
+  - [Invoking a Task](#invoking-a-task)
+  - [Sending Events](#sending-events)
+  - [Cancelling Tasks](#cancelling-tasks)
+  - [Retrying Failed Steps](#retrying-failed-steps)
+- [API Reference](#api-reference)
+  - [`createFirequeue(options)`](#createfirequeueoptions)
+  - [`firequeue.createTask(taskId, options, run)`](#firequeuecreatetasktaskid-options-run)
+  - [`step.run(stepId, fn)`](#steprunstepid-fn)
+  - [`step.waitForEvent(options)`](#stepwaitforeventoptions)
+  - [`firequeue.invokeTask(options)`](#firequeueinvoketaskoptions)
+  - [`firequeue.sendEvent(options)`](#firequeuesendeventoptions)
+  - [`firequeue.cancelTask(options)`](#firequeuecanceltaskoptions)
+  - [`firequeue.cancelSteps(options)`](#firequeuecancelstepsoptions)
+  - [`firequeue.invalidateTask(options)`](#firequeueinvalidatetaskoptions)
+- [Gotchas](#gotchas)
+  - [Speculative Execution Can Timeout](#speculative-execution-can-timeout)
+  - [Step IDs Must Be Unique Within a Task](#step-ids-must-be-unique-within-a-task)
+  - [Step Results Must Be Serializable](#step-results-must-be-serializable)
+  - [Conditional Steps Need Unique IDs](#conditional-steps-need-unique-ids)
+  - [Events Must Be Sent After Task Starts Waiting](#events-must-be-sent-after-task-starts-waiting)
+  - [Zombie Step Detection](#zombie-step-detection)
+- [Firestore Structure](#firestore-structure)
 
 ## Installation
 
@@ -17,148 +50,154 @@ npm install @fireq/firequeue
 yarn add @fireq/firequeue
 ```
 
-## Features
-
-- **Durable Execution:** Workflows automatically pause and resume between steps, making them resilient to function timeouts and failures.
-- **Simple, Inngest-like API:** Define complex workflows with a clean, `async/await` syntax using `step.run()`.
-- **State Management:** Automatically manages task and step state (including results) in Firestore.
-- **Concurrency Control:** Built-in support for Firebase Cloud Functions' concurrency settings.
-- **Conditional Logic:** Easily implement conditional steps in your workflows.
-- **Serverless:** Built entirely on Firebase Cloud Functions and Firestore.
-
 ## How It Works
 
-Firequeue cleverly uses Firestore to persist the state of your workflows.
+1. **Invoke:** Call `firequeue.invokeTask()` to create a task document in Firestore.
+2. **Trigger:** A Cloud Function created by `firequeue.createTask()` is triggered by the document write.
+3. **Execute:** The function runs through your workflow. Each `step.run()` call:
+   - Creates a step document in a subcollection (if it doesn't exist)
+   - Executes the step function and saves the result
+   - In default mode: stops execution and re-triggers the function for the next step
+   - In speculative mode: continues to the next step until timeout approaches
+4. **Resume:** On subsequent runs, completed steps return their saved result without re-executing.
 
-1.  **Invoke:** You start a workflow by calling `firequeue.invokeTask()`. This creates a new "task" document in a specified Firestore collection.
-2.  **Trigger:** A Cloud Function, created by `firequeue.createTask()`, is triggered by the new task document.
-3.  **Execute & Persist:** The function executes your workflow step-by-step.
-    - When `step.run()` is called for the first time, it creates a "step" document in a subcollection within the task document.
-    - It then executes the code inside your step and saves the result to the step's document in Firestore.
-    - After the step completes, the Cloud Function execution is gracefully stopped and immediately re-triggered to process the next step.
-4.  **Resume & Return:** On subsequent runs, when `step.run()` is called for a step that has already completed, it simply retrieves the saved result from Firestore and returns it without re-running the code.
+### Execution Modes
 
-This "pause and resume" mechanism ensures that each step runs exactly once, and the entire workflow can run for much longer than a single Cloud Function timeout allows.
+| Mode | Behavior |
+|------|----------|
+| `serializable` (default) | Executes one step per function invocation, then re-triggers |
+| `speculative` | Executes as many steps as possible until `timeoutSeconds - 5s` |
 
-## Creating a Workflow
+### Task Statuses
 
-Creating a workflow is a two-step process: define your workflow logic, and then trigger it.
+| Status | Description |
+|--------|-------------|
+| `scheduled` | Task is queued for execution |
+| `running` | Task is currently executing |
+| `waiting` | Task is waiting for an event via `step.waitForEvent()` |
+| `completed` | All steps finished successfully |
+| `cancelled` | Task was cancelled |
+| `error` | A step failed |
 
-### 1. Define the Workflow
+### Step Statuses
 
-`firequeue.createTask` is the equivalent of `inngest.createFunction`. You define a task that listens for invocations and use the `step` utility to define durable steps.
+| Status | Description |
+|--------|-------------|
+| `scheduled` | Step is ready to execute |
+| `running` | Step is currently executing |
+| `completed` | Step finished and result is saved |
+| `cancelled` | Step was cancelled |
+| `error` | Step execution failed |
 
-Each `step.run()` call encapsulates a single, distinct operation. This is crucial for long-running tasks, as Firequeue ensures that each step runs exactly once and its result is persisted. If a function times out or fails, Firequeue will resume from the last successfully completed step. Keep individual steps focused and relatively short to maximize resilience and avoid hitting Cloud Function timeouts within a step.
+## Usage
 
-**`src/functions.ts`**
-
-```typescript
-import { firequeue } from "./init";
-import { payments, inventory, shipping, email } from "./services"; // Hypothetical services
-
-// The data our workflow receives
-interface OrderData {
-  orderId: string;
-  customerId: string;
-  items: { productId: string; quantity: number }[];
-}
-
-export const processOrderWorkflow = firequeue.createTask(
-  "order-processing-flow",
-  { collectionPath: "queue" },
-  async ({ step, input }) => {
-    const { orderId, customerId, items } = input as OrderData;
-
-    // Step 1: Process the payment via a third-party gateway.
-    const paymentDetails = await step.run("process-payment", async () => {
-      console.log(`Processing payment for order: ${orderId}`);
-      return payments.charge(customerId, orderId);
-    });
-
-    // Step 2: Update inventory levels in the database.
-    await step.run("update-inventory", async () => {
-      console.log(`Updating inventory for order: ${orderId}`);
-      return inventory.decrementStock(items);
-    });
-
-    // Step 3: Create a shipment with a shipping provider API.
-    const shipmentInfo = await step.run("create-shipment", async () => {
-      console.log(`Creating shipment for order: ${orderId}`);
-      return shipping.create(orderId, customerId);
-    });
-
-    // Step 4: Send a confirmation email to the customer.
-    await step.run("send-confirmation-email", async () => {
-      console.log(`Sending confirmation for order: ${orderId}`);
-      return email.sendOrderConfirmation(customerId, {
-        orderId,
-        paymentDetails,
-        shipmentInfo,
-      });
-    });
-
-    console.log(`Order processing complete for: ${orderId}`);
-  }
-);
-```
-
-### 2. Trigger the Workflow
-
-To trigger the workflow, call `firequeue.invokeTask()`. This is the equivalent of `inngest.send()`.
-
-It's common to trigger a background workflow after a primary action, like an API request to create an order.
-
-**`src/http-triggers.ts`**
+### Initialization
 
 ```typescript
-import { onRequest } from "firebase-functions/v2/https";
-import { firequeue } from "./init";
-import { db } from "./services"; // Hypothetical db service
-
-export const createOrder = onRequest(async (req, res) => {
-  const { customerId, items } = req.body;
-
-  if (!customerId || !items) {
-    res.status(400).send("Bad Request: Missing customerId or items.");
-    return;
-  }
-
-  // 1. Create the initial order record in the database
-  const orderRef = await db.collection("orders").add({
-    customerId,
-    items,
-    status: "pending",
-    createdAt: new Date(),
-  });
-
-  // 2. Trigger the long-running order fulfillment workflow
-  await firequeue.invokeTask({
-    taskId: "order-processing-flow",
-    collectionPath: "queue",
-    input: { orderId: orderRef.id, customerId, items },
-  });
-
-  res.status(201).send({
-    orderId: orderRef.id,
-    message: "Order received and processing started.",
-  });
-});
-```
-
-### 3. Don't Forget Initialization
-
-Your workflows will need an initialized `firequeue` instance to work.
-
-**`src/init.ts`**
-
-```typescript
+// src/init.ts
 import { createFirequeue } from "@fireq/firequeue";
 import * as admin from "firebase-admin";
 
 admin.initializeApp();
 
-export const firequeue = createFirequeue({
+// Define your task input types
+interface TaskRegistry {
+  "order-processing": { orderId: string; customerId: string };
+  "send-email": { to: string; subject: string };
+}
+
+export const firequeue = createFirequeue<TaskRegistry>({
   firestore: admin.firestore(),
+  logLevel: "debug", // optional
+});
+```
+
+### Defining a Task
+
+```typescript
+// src/functions.ts
+import { firequeue } from "./init";
+
+export const processOrder = firequeue.createTask(
+  "order-processing",
+  {
+    collectionPath: "queue",
+    timeoutSeconds: 120,
+    executionMode: "speculative", // optional, defaults to "serializable"
+  },
+  async ({ step, input, taskInstanceId }) => {
+    // Step 1
+    const payment = await step.run("process-payment", async () => {
+      return processPayment(input.orderId);
+    });
+
+    // Step 2
+    await step.run("update-inventory", async () => {
+      return updateInventory(input.orderId);
+    });
+
+    // Wait for external event (e.g., webhook confirmation)
+    await step.waitForEvent({ event: "payment-confirmed" });
+
+    // Step 3
+    await step.run("send-confirmation", async () => {
+      return sendEmail(input.customerId, payment);
+    });
+  }
+);
+```
+
+### Invoking a Task
+
+```typescript
+import { firequeue } from "./init";
+
+await firequeue.invokeTask({
+  taskId: "order-processing",
+  collectionPath: "queue",
+  input: { orderId: "123", customerId: "456" },
+});
+```
+
+### Sending Events
+
+When a task is waiting for an event via `step.waitForEvent()`, send the event to resume execution:
+
+```typescript
+await firequeue.sendEvent({
+  taskInstanceId: "abc123",
+  collectionPath: "queue",
+  event: "payment-confirmed",
+});
+```
+
+### Cancelling Tasks
+
+```typescript
+// Cancel an entire task
+await firequeue.cancelTask({
+  taskInstanceId: "abc123",
+  collectionPath: "queue",
+});
+
+// Cancel specific steps
+await firequeue.cancelSteps({
+  taskInstanceId: "abc123",
+  collectionPath: "queue",
+  stepIds: ["step-1", "step-2"],
+});
+```
+
+### Retrying Failed Steps
+
+Use `invalidateTask` to reschedule failed steps:
+
+```typescript
+await firequeue.invalidateTask({
+  taskInstanceId: "abc123",
+  collectionPath: "queue",
+  stepIds: ["failed-step"],
+  events: ["event-to-recreate"], // optional
 });
 ```
 
@@ -166,65 +205,215 @@ export const firequeue = createFirequeue({
 
 ### `createFirequeue(options)`
 
-Creates a new Firequeue instance.
+Creates a Firequeue instance.
 
-- `options.firestore`: A `FirebaseFirestore.Firestore` instance from the `firebase-admin` SDK.
-- `options.serializer` (optional): A custom serializer for handling data persistence. Defaults to a JSON-based serializer that handles `undefined`, `null`, and `NaN`.
-- `options.logLevel` (optional): A log level.
+| Option | Type | Description |
+|--------|------|-------------|
+| `firestore` | `FirebaseFirestore.Firestore` | Firestore instance from firebase-admin |
+| `serializer` | `Serializer` | Optional. Custom serializer for step results. Default handles `undefined`, `null`, `NaN` |
+| `logLevel` | `LogSeverity` | Optional. Log level (`debug`, `info`, `warn`, `error`) |
 
 ### `firequeue.createTask(taskId, options, run)`
 
-Creates a Cloud Function trigger that executes a workflow.
+Creates a Firestore-triggered Cloud Function.
 
-- `taskId` (string): A unique identifier for this task definition.
-- `options` (TaskOptions):
-  - `collectionPath` (string): The Firestore collection path where task documents will be created and listened for.
-  - `concurrency?` (number): Sets the maximum number of concurrent function instances.
-  - `secrets?` (string[]): Specifies any secrets the function needs access to.
-  - `timeoutSeconds?` (number): The timeout for the underlying Cloud Function.
-- `run({ step, input, taskInstanceId })`: The async function containing your workflow logic.
-  - `step`: The step factory object.
-  - `input`: The data payload passed to `invokeTask`.
-  - `taskInstanceId`: The unique ID for the current workflow execution.
+**Options:**
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `collectionPath` | `string` | Firestore collection path for task documents |
+| `executionMode` | `"serializable" \| "speculative"` | Optional. Default: `"serializable"` |
+| `timeoutSeconds` | `number` | Optional. Function timeout |
+| `concurrency` | `number` | Optional. Max concurrent instances |
+| `secrets` | `string[]` | Optional. Secret names to expose |
+
+**Run function parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `step` | `StepFactory` | Step execution utilities |
+| `input` | `T \| null` | Input data passed to `invokeTask` |
+| `taskInstanceId` | `string` | Unique ID for this task instance |
+| `event` | `FirestoreEvent` | The Firestore trigger event |
 
 ### `step.run(stepId, fn)`
 
-Defines a durable step within a task.
+Executes a durable step.
 
-- `stepId` (string): A unique identifier for this step _within the task_.
-- `fn` (() => Promise<T>): An async function that contains the logic for the step. The return value will be persisted and made available to subsequent steps.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `stepId` | `string` | Unique step identifier within the task |
+| `fn` | `() => Promise<T>` | Async function to execute. Return value is persisted |
+
+Returns the step result (from execution or cache).
+
+### `step.waitForEvent(options)`
+
+Pauses task execution until an event is received.
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `event` | `string` | Event name to wait for |
+| `timeout` | `TimeString` | Optional. Timeout (e.g., `"5m"`, `"1h"`) |
 
 ### `firequeue.invokeTask(options)`
 
-Starts a new workflow execution.
+Starts a new task execution.
 
-- `options`:
-  - `taskId` (string): The `taskId` of the workflow you want to run.
-  - `collectionPath` (string): The collection path where the target task is listening. This must match the path defined in `createTask`.
-  - `input?` (unknown): An optional data payload to pass to the workflow. The data must be serializable.
+| Option | Type | Description |
+|--------|------|-------------|
+| `taskId` | `string` | Task identifier (must match `createTask`) |
+| `collectionPath` | `string` | Collection path (must match `createTask`) |
+| `input` | `T` | Optional. Input data for the task |
+
+### `firequeue.sendEvent(options)`
+
+Sends an event to a waiting task.
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `taskInstanceId` | `string` | Task instance ID |
+| `collectionPath` | `string` | Collection path |
+| `event` | `string` | Event name |
 
 ### `firequeue.cancelTask(options)`
 
-Cancels a running task instance.
+Cancels a task.
 
-- `options`:
-  - `taskInstanceId` (string): The unique ID of the task instance to cancel.
-  - `collectionPath` (string): The collection path where the task is located.
+| Option | Type | Description |
+|--------|------|-------------|
+| `taskInstanceId` | `string` | Task instance ID |
+| `collectionPath` | `string` | Collection path |
 
 ### `firequeue.cancelSteps(options)`
 
-Cancels specific steps within a task and sets the task status to `Cancelled`.
+Cancels specific steps and sets task status to `cancelled`.
 
-- `options`:
-  - `taskInstanceId` (string): The unique ID of the task instance.
-  - `collectionPath` (string): The collection path where the task is located.
-  - `stepIds` (string[]): An array of step IDs to cancel.
+| Option | Type | Description |
+|--------|------|-------------|
+| `taskInstanceId` | `string` | Task instance ID |
+| `collectionPath` | `string` | Collection path |
+| `stepIds` | `string[]` | Step IDs to cancel |
 
-### `firequeue.scheduleSteps(options)`
+### `firequeue.invalidateTask(options)`
 
-Reschedules specific steps within a task and sets the task status to `Scheduled`. This is useful for retrying failed steps.
+Reschedules steps for retry and sets task status to `scheduled`.
 
-- `options`:
-  - `taskInstanceId` (string): The unique ID of the task instance.
-  - `collectionPath` (string): The collection path where the task is located.
-  - `stepIds` (string[]): An array of step IDs to reschedule.
+| Option | Type | Description |
+|--------|------|-------------|
+| `taskInstanceId` | `string` | Task instance ID |
+| `collectionPath` | `string` | Collection path |
+| `stepIds` | `string[]` | Step IDs to reschedule |
+| `events` | `string[]` | Optional. Events to recreate |
+
+## Gotchas
+
+### Speculative Execution Can Timeout
+
+In `speculative` mode, multiple steps run in a single function invocation. If the workflow takes longer than `timeoutSeconds`, the function will timeout and **the workflow will not automatically resume**. The task will be left in `running` status.
+
+Use speculative execution only for short workflows where you want the step structure (idempotency, result caching) but don't need the reliability of per-step re-invocation.
+
+```typescript
+// Good: small workflow, steps are fast
+firequeue.createTask("send-notification", {
+  collectionPath: "queue",
+  executionMode: "speculative",
+}, async ({ step }) => {
+  const user = await step.run("get-user", () => getUser());
+  await step.run("send-email", () => sendEmail(user));
+});
+
+// Bad: long workflow with slow steps
+firequeue.createTask("process-video", {
+  collectionPath: "queue",
+  executionMode: "speculative", // Don't do this
+}, async ({ step }) => {
+  await step.run("download", () => downloadVideo()); // 30s
+  await step.run("transcode", () => transcodeVideo()); // 60s
+  await step.run("upload", () => uploadVideo()); // 30s
+});
+```
+
+### Step IDs Must Be Unique Within a Task
+
+Each `step.run()` call must have a unique `stepId`. If you use the same ID twice, the second call will return the cached result from the first execution.
+
+```typescript
+// Wrong: both steps have the same ID
+await step.run("process", () => processA());
+await step.run("process", () => processB()); // Returns result of processA()
+
+// Correct
+await step.run("process-a", () => processA());
+await step.run("process-b", () => processB());
+```
+
+### Step Results Must Be Serializable
+
+Step return values are stored in Firestore as JSON. Functions, symbols, circular references, and other non-serializable values will cause errors or be lost.
+
+```typescript
+// Wrong: returning a function
+await step.run("bad", () => {
+  return { callback: () => {} }; // Will fail or be lost
+});
+
+// Correct: return plain data
+await step.run("good", () => {
+  return { id: "123", name: "test" };
+});
+```
+
+If you need to serialize types that JSON doesn't support (e.g., `Date`, `BigInt`, custom classes), provide a custom serializer:
+
+```typescript
+import superjson from "superjson";
+
+const firequeue = createFirequeue({
+  firestore: admin.firestore(),
+  serializer: {
+    stringify: (data) => superjson.stringify(data),
+    parse: (str) => superjson.parse(str),
+  },
+});
+```
+
+### Conditional Steps Need Unique IDs
+
+If you have conditional logic, make sure step IDs are unique across all branches:
+
+```typescript
+// Wrong: step ID collision between branches
+if (condition) {
+  await step.run("send", () => sendEmail());
+} else {
+  await step.run("send", () => sendSms()); // ID collision!
+}
+
+// Correct
+if (condition) {
+  await step.run("send-email", () => sendEmail());
+} else {
+  await step.run("send-sms", () => sendSms());
+}
+```
+
+### Events Must Be Sent After Task Starts Waiting
+
+If you send an event before the task reaches `step.waitForEvent()`, the event will be consumed immediately. If the task hasn't started yet or is still on earlier steps, make sure your event sender waits for the appropriate state.
+
+### Zombie Step Detection
+
+If a step is in `running` status for longer than `timeoutSeconds + 10s`, it's marked as `error` (zombie detection). This handles cases where a function crashed mid-step without updating the status.
+
+## Firestore Structure
+
+```
+{collectionPath}/
+  {taskInstanceId}/           # Task document
+    steps/
+      {stepId}/               # Step documents
+    events/
+      {eventId}/              # Event documents
+```
