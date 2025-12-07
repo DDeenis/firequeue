@@ -11,7 +11,6 @@ import {
   type Task,
   type TaskOptions,
   EVENT_NOT_TRIGGERED,
-  EventStatus,
   STEP_CANCELLED,
   STEP_COMPLETED,
   STEP_CREATED,
@@ -29,11 +28,7 @@ import {
   unwrapFirestoreOptionsValue,
 } from "./utils.js";
 import type { LogSeverity } from "firebase-functions/logger";
-import {
-  isEventExecutionResult,
-  isEventExpired,
-  throwEventResult,
-} from "./events.js";
+import { isEventExecutionResult, throwEventResult } from "./events.js";
 
 /**
  * Creates a new Firequeue instance.
@@ -285,11 +280,7 @@ export function createFirequeue<
             eventOptions.event
           );
 
-          // event was not triggered
-          if (
-            !consumedEvent ||
-            isEventExpired(consumedEvent, eventOptions.timeout)
-          ) {
+          if (!consumedEvent) {
             logger.debug(
               `Event '${eventOptions.event}' was not received yet or has already expired`
             );
@@ -298,36 +289,6 @@ export function createFirequeue<
           }
 
           // continue execution
-          return;
-        },
-
-        waitForSingleEvent: async (eventOptions) => {
-          // don't delete event
-          const eventData = await storage.getEvent(
-            taskDocumentPath,
-            eventOptions.event
-          );
-
-          if (!eventData) {
-            logger.debug(`Event '${eventOptions.event}' was not received yet`);
-
-            throwEventResult(eventOptions.event, EVENT_NOT_TRIGGERED);
-          }
-
-          const isConsumed = eventData.status === EventStatus.Consumed;
-
-          if (!isConsumed && isEventExpired(eventData, eventOptions.timeout)) {
-            logger.debug(
-              `Event '${eventOptions.event}' has already expired after a ${eventOptions.timeout} timeout`
-            );
-
-            throwEventResult(eventOptions.event, EVENT_NOT_TRIGGERED);
-          }
-
-          if (!isConsumed) {
-            await storage.consumeEvent(taskDocumentPath, eventOptions.event);
-          }
-
           return;
         },
       };
@@ -449,7 +410,9 @@ export function createFirequeue<
    * @param options.input - An optional data payload to pass to the workflow. The data must be serializable.
    * @returns A promise that resolves with the created task document.
    */
-  function invokeTask<TID extends Extract<keyof FunctionsRegistry, string>>({
+  async function invokeTask<
+    TID extends Extract<keyof FunctionsRegistry, string>
+  >({
     taskId,
     collectionPath,
     input,
@@ -460,7 +423,7 @@ export function createFirequeue<
   }) {
     logger.debug(`[FireQueue] Created task function '${taskId}'`);
 
-    return storage.createTask({
+    await storage.createTask({
       taskId,
       collectionPath,
       serializedInputData: serializer.stringify(input),
@@ -475,11 +438,11 @@ export function createFirequeue<
    * @param input.collectionPath - The collection path where the task is located.
    * @returns A promise that resolves when the task is cancelled.
    */
-  function cancelTask(input: {
+  async function cancelTask(input: {
     taskInstanceId: string;
     collectionPath: string;
   }) {
-    return storage.updateTask(storage.getTaskDocumentPath(input), {
+    await storage.updateTask(storage.getTaskDocumentPath(input), {
       status: TaskStatus.Cancelled,
     });
   }
@@ -493,12 +456,12 @@ export function createFirequeue<
    * @param input.stepIds - An array of step IDs to cancel.
    * @returns A promise that resolves when the steps and task are updated.
    */
-  function cancelSteps(input: {
+  async function cancelSteps(input: {
     taskInstanceId: string;
     collectionPath: string;
     stepIds: string[];
   }) {
-    return storage.markStepsAndTaskWithStatus({
+    await storage.markTaskEntitiesWithStatus({
       ...input,
       taskStatus: TaskStatus.Cancelled,
       stepsStatus: StepStatus.Cancelled,
@@ -513,14 +476,16 @@ export function createFirequeue<
    * @param input.taskInstanceId - The unique ID of the task instance.
    * @param input.collectionPath - The collection path where the task is located.
    * @param input.stepIds - An array of step IDs to reschedule.
+   * @param input.events - An array of events to recreate.
    * @returns A promise that resolves when the steps and task are updated.
    */
-  function invalidateTaskAndSteps(input: {
+  async function invalidateTask(input: {
     taskInstanceId: string;
     collectionPath: string;
     stepIds: string[];
+    events?: string[];
   }) {
-    return storage.markStepsAndTaskWithStatus({
+    await storage.markTaskEntitiesWithStatus({
       ...input,
       taskStatus: TaskStatus.Scheduled,
       stepsStatus: StepStatus.Scheduled,
@@ -541,7 +506,7 @@ export function createFirequeue<
     invokeTask,
     cancelTask,
     cancelSteps,
-    invalidateTaskAndSteps,
+    invalidateTask,
     sendEvent,
   };
 }

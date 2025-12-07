@@ -1,3 +1,4 @@
+import { isEventExpired } from "./events.js";
 import {
   EventStatus,
   StepStatus,
@@ -5,6 +6,7 @@ import {
   type FirequeueEvent,
   type Step,
   type Task,
+  type TimeString,
 } from "./types.js";
 import { removeTrailingSlash } from "./utils.js";
 
@@ -120,16 +122,18 @@ export class FirestoreTasksStorage {
     return stepRef.update(updates);
   }
 
-  public async markStepsAndTaskWithStatus({
+  public async markTaskEntitiesWithStatus({
     taskInstanceId,
     collectionPath,
     stepIds,
+    events,
     taskStatus,
     stepsStatus,
   }: {
     taskInstanceId: string;
     collectionPath: string;
     stepIds: string[];
+    events?: string[];
     taskStatus: TaskStatus;
     stepsStatus: StepStatus;
   }) {
@@ -142,10 +146,22 @@ export class FirestoreTasksStorage {
     const stepRefs = stepIds.map((stepId) =>
       this.getStepRef(taskDocumentPath, stepId)
     );
+    const eventRefs = events?.length
+      ? events.map((eventId) => this.getEventRef(taskDocumentPath, eventId))
+      : [];
 
     await this.firestore.runTransaction(async (trx) => {
       for (const stepRef of stepRefs) {
         trx.update(stepRef, { status: stepsStatus });
+      }
+
+      for (const eventRef of eventRefs) {
+        // re-create events
+        trx.set(eventRef, {
+          eventId: eventRef.id,
+          status: EventStatus.Received,
+          createdAt: Date.now(),
+        });
       }
 
       trx.update(taskRef, { status: taskStatus });
@@ -173,7 +189,8 @@ export class FirestoreTasksStorage {
 
   public getAndConsumeEvent(
     taskDocumentPath: string,
-    eventId: string
+    eventId: string,
+    timeout?: TimeString
   ): Promise<FirequeueEvent | null> {
     const eventRef = this.getEventRef(taskDocumentPath, eventId);
 
@@ -184,7 +201,15 @@ export class FirestoreTasksStorage {
 
       const eventData = eventDoc.data();
 
-      if (!eventData || eventData.status === EventStatus.Consumed) return null;
+      if (!eventData) return null;
+      if (eventData.status === EventStatus.Consumed) return eventData;
+
+      if (isEventExpired(eventData, timeout)) {
+        trx.update(eventRef, {
+          status: EventStatus.Expired,
+        });
+        return null;
+      }
 
       trx.update(eventRef, {
         status: EventStatus.Consumed,

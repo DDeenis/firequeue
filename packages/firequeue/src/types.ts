@@ -61,6 +61,7 @@ interface EventOptions {
 export enum EventStatus {
   Received = "received",
   Consumed = "consumed",
+  Expired = "expired",
 }
 
 export type TimeString =
@@ -76,7 +77,6 @@ export type TimeString =
 export interface StepFactory {
   run: <T>(id: string, run: () => Promise<T>) => Promise<T>;
   waitForEvent(opts: EventOptions): Promise<void>;
-  waitForSingleEvent(opts: EventOptions): Promise<void>;
 }
 
 export interface Serializer {
